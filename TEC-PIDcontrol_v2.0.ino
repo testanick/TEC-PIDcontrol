@@ -1,19 +1,18 @@
 /********************************************************
  * TEC control
- * TEST
  ********************************************************/
 
 #include <LiquidCrystal.h>
 #include <math.h>
 #include <PID_v1.h>
 
+unsigned long timeMilli;
 //Define Variables we'll be connecting to
-double Setpoint = 30;     //set the original Setpoint = 20C
+double Setpoint = 22;     //set the original Setpoint = 20C
 double Input, Output;
 //Define the aggressive and conservative Tuning Parameters
-double aggKp=5, aggKi=1, aggKd=1;
-double consKp=2.5, consKi=0.25, consKd=0.5;
-double lowKp=1, lowKi=0.025, lowKd=0.05;
+double aggKp = 9,   aggKi = 0.05,  aggKd = 1;
+double consKp = 100, consKi = 0.25, consKd = 4;
 
 //define button-controlled setpoint adjustments
 float tempAdjNeg, tempAdjPos, LEDtemp;
@@ -39,9 +38,9 @@ PID myPID(&Input, &Output, &Setpoint, aggKp, aggKi, aggKd, DIRECT);
 LiquidCrystal lcd(7, 8, 9, 10, 11, 12);   // Pins for LCD display
 
 float vcc = 4.91;                       // only used for display purposes, if used
-                                        // set to the measured Vcc. <- voltage of power supply
+// set to the measured Vcc. <- voltage of power supply
 float pad = 9850;                       // balance/pad resistor value, set this to
-                                        // the measured resistance of your pad resistor
+// the measured resistance of your pad resistor
 float thermr = 10000;                   // thermistor nominal resistance
 
 int Vo;
@@ -54,14 +53,14 @@ double readings[numReadings];      // the readings from the analog input
 int readIndex = 0;              // the index of the current reading
 double total = 0;                  // the running total
 
-int RevMode = 0;              // determines whether an extreme has been hit and corrects it
+int pressed = 0;              // determines whether a button has ever been pressed
 
 float Thermistor(int RawADC)
 {
   long Resistance;
   float Temp;  // Dual-Purpose variable to save space.
 
-  Resistance=pad*((1024.0 / RawADC) - 1);
+  Resistance = pad * ((1024.0 / RawADC) - 1);
   Temp = log(Resistance); // Saving the Log(resistance) so not to calculate  it 4 times later
   Temp = 1 / (0.001129148 + (0.000234125 * Temp) + (0.0000000876741 * Temp * Temp * Temp));
   Temp = Temp - 273.15;  // Convert Kelvin to Celsius
@@ -83,15 +82,15 @@ void setup()
   Input = Thermistor(analogRead(ThermistorPIN));
 
   // initialize all the readings to 0:
-  for (int thisReading = 0; thisReading < numReadings; thisReading++) 
+  for (int thisReading = 0; thisReading < numReadings; thisReading++)
   {
     readings[thisReading] = 0;
   }
 
   //turn the PID on
-  myPID.SetOutputLimits(0,255); //tells PID to range output from -255 to 255
-  myPID.SetMode(AUTOMATIC);
-  
+  myPID.SetOutputLimits(-255, 255); //tells PID to range output from -255 to 255
+  myPID.SetMode(MANUAL);            //turns off PID until a button is pressed (below)
+
   //turns on the lcd display
   lcd.begin(16, 2);
 
@@ -102,11 +101,11 @@ void loop()
   //read in input buttons
   plusState = digitalRead(plusPIN);
   minusState = digitalRead(minusPIN);
-  
+
   //read in resistance across thermistor; convert to temp
   float temp;
-//  temp = Thermistor(analogRead(ThermistorPIN));       // read ADC and  convert it to Celsius
- // subtract the last reading:
+  //  temp = Thermistor(analogRead(ThermistorPIN));       // read ADC and  convert it to Celsius
+  // subtract the last reading:
   total = total - readings[readIndex];
   // read from the sensor:
   readings[readIndex] = Thermistor(analogRead(ThermistorPIN));
@@ -116,7 +115,7 @@ void loop()
   readIndex = readIndex + 1;
 
   // if we're at the end of the array...
-  if (readIndex >= numReadings) 
+  if (readIndex >= numReadings)
   {
     // ...wrap around to the beginning:
     readIndex = 0;
@@ -131,110 +130,79 @@ void loop()
   Input = temp;
 
   // compare buttonStates to their previous state
-  if (minusState != lastMinusState) 
+  if (minusState != lastMinusState)
   {
     // if the state has changed, increment the counter
-    if (minusState == HIGH) 
+    if (minusState == HIGH)
     {
       // if the current state is HIGH then the button
       // went from off to on:
       //minusPushCounter++;
       tempAdjNeg = 0.5;
-    } 
-    else 
+      pressed = 1;
+    }
+    else
     {
       tempAdjNeg = 0;
     }
     // Delay a little bit to avoid bouncing
     delay(100);
   }
-  if (plusState != lastPlusState) 
+  if (plusState != lastPlusState)
   {
     // if the state has changed, increment the counter
-    if (plusState == HIGH) 
+    if (plusState == HIGH)
     {
       // if the current state is HIGH then the button
       // went from off to on:
       //plusPushCounter++;
       tempAdjPos = 0.5;
-    } 
-    else 
+      pressed = 1;
+    }
+    else
     {
       tempAdjPos = 0;
     }
     // Delay a little bit to avoid bouncing
     delay(100);
   }
-
+     
+  if (tempAdjPos == 0 & tempAdjNeg == 0 & pressed == 1)    //turns PID on AUTO after button is released
+  {
+    myPID.SetMode(AUTOMATIC);
+  }
 
   //this configuration should make it so that Setpoint adjusts only based on button input
   Setpoint = Setpoint + tempAdjPos - tempAdjNeg;
   //Input = temp;
 
   //adaptive tuning parameters for PID
-  double gap = abs(Setpoint-Input); //distance away from setpoint
-  if (Setpoint < 22 & RevMode != 1)
+//  double gap = abs(Setpoint - Input); //distance away from setpoint
+//  myPID.SetTunings(aggKp, aggKi, aggKd);
+//  if (gap < 2)
+//  {
+//    myPID.SetTunings(consKp, consKi, consKd);
+//  }
+  if (Setpoint < temp)
   {
-    digitalWrite(dirPIN, HIGH);       //switch peltier to cooling mode
-    myPID.SetTunings(aggKp, aggKi, aggKd);
-    if (temp > (Setpoint + 3) & temp > (Setpoint + 1) & RevMode != 1)
-    {
-      myPID.SetTunings(consKp, consKi, consKd);
-    }
-    if (temp < (Setpoint + 1) & temp > (Setpoint - 0.5) & RevMode != 1)
-    {
-      myPID.SetTunings(lowKp, lowKi, lowKd);
-    }
-    if (temp < (Setpoint - 0.5))
-    {
-      RevMode = 1;
-    }
-    if (RevMode = 1)
-    {
-      digitalWrite(dirPIN, LOW);       //switch peltier to heating mode
-      myPID.SetMode(MANUAL);            // sets PID to manual mode
-      Output = 150;
-      if (temp > (Setpoint + 0.3))
-      {
-        Output = 0;
-        RevMode = 0;
-        myPID.SetMode(AUTOMATIC);       // supposedly sets PID back to auto mode
-        digitalWrite(dirPIN, HIGH);      //switch peltier to cooling mode
-        myPID.SetTunings(lowKp, lowKi, lowKd);
-      }
-    }
+    myPID.SetTunings(consKp, consKi, consKd);
   }
-  if (Setpoint > 22 & RevMode != 1)
+  if (Setpoint >= temp)
   {
     myPID.SetTunings(aggKp, aggKi, aggKd);
-    if (temp > (Setpoint - 3) & temp < (Setpoint - 1) & RevMode != 1)
-    {
-      myPID.SetTunings(consKp, consKi, consKd);
-    }
-    if (temp > (Setpoint - 1) & temp < (Setpoint + 0.3) & RevMode != 1)
-    {
-      myPID.SetTunings(lowKp, lowKi, lowKd);
-    }
-    if (temp > (Setpoint + 0.3))
-    {
-      RevMode = 1;
-    }
-    if (RevMode = 1)
-    {
-      digitalWrite(dirPIN, HIGH);       //switch peltier to cooling mode
-      myPID.SetMode(MANUAL);            // sets PID to manual mode
-      Output = 200;
-      if (temp < (Setpoint - 0.3))
-      {
-        Output = 0;
-        RevMode = 0;
-        myPID.SetMode(AUTOMATIC);       // supposedly sets PID back to auto mode
-        digitalWrite(dirPIN, LOW);      //switch peltier to heating mode
-        myPID.SetTunings(lowKp, lowKi, lowKd);
-      }
-    }
   }
   myPID.Compute();
+
+  if (Output < 0)
+  {
+    digitalWrite(dirPIN, HIGH);       //switch peltier to cooling mode
+    Output = Output * -1;
+  }
+  else
+  {
+    digitalWrite(dirPIN, LOW);       //keeps it on heating mode
+  }
+
   fanOutput = Output * 0.75;
   analogWrite(PeltierPIN, Output);
   analogWrite(fanPIN, fanOutput);
@@ -246,7 +214,7 @@ void loop()
   lcd.print(Setpoint, 1);
   lcd.print("C");
 //  lcd.print(Output);
-//  lcd.print(dirChange);
+  //  lcd.print(dirChange);
   // set the cursor to (16,1):
   lcd.setCursor(0, 1);
   lcd.print("Temp: ");
@@ -259,14 +227,16 @@ void loop()
   lcd.clear();
 
   // print information to computer
-  Serial.print(Setpoint, 2) // print setpoint as dictated by button press
-  Serial.print(", ")
-  Serial.print(Input, 2) // print temperature after conversion
-  Serial.print(", ")
-  Serial.print(Output, 2) // print how hard TEC is working to get to setpoint 
-  Serial.print(", ")
-  Serial.println(fanOutput, 2) // print how hard fan is working to cool off heatsink
+  timeMilli = millis();     // time since program started
+  Serial.print(timeMilli);  //prints time since program started
+  Serial.print(", ");
+  Serial.print(Setpoint, 2); // print setpoint as dictated by button press
+  Serial.print(", ");
+  Serial.print(Input, 2); // print temperature after conversion
+  Serial.print(", ");
+  Serial.print(Output, 2); // print how hard TEC is working to get to setpoint 
+  Serial.print(", ");
+  Serial.println(fanOutput, 2); // print how hard fan is working to cool off heatsink
 
 }
-
 
